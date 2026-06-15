@@ -1,55 +1,47 @@
 #pragma once
 
 #include <cstdint>
-
-#include <rte_random.h>
-
-#include "test_instance.hpp"
+#include <array>
 
 // =====================================================================
-// IMIX - стандартное распределение размеров фреймов, имитирующее
-// интернет-трафик (по аналогии с RFC 6985 / распространённым
-// промышленным IMIX). Используется при FrameMode::IMIX.
+// IMIX — Internet Mix, стандартное распределение размеров пакетов.
 //
-// Распределение (по числу пакетов):
-//   7 пакетов x 64 байта   (~58%  по количеству, ~6% трафика)
-//   4 пакета  x 594 байта
-//   1 пакет   x 1518 байт
+// Классическое соотношение RFC 6985:
+//   58.33% × 64  bytes  (7 из 12)
+//   33.33% × 512 bytes  (4 из 12)
+//    8.33% × 1518 bytes  (1 из 12)
 //
-// Итого цикл из 12 пакетов. Возвращает следующий размер по
-// детерминированному циклу (per-stream счётчик) либо случайно
-// (по весам) - здесь реализован детерминированный цикл для
-// предсказуемости теста.
+// imix_next(idx) возвращает размер фрейма для текущего idx и
+// инкрементирует idx (0..11 по кругу).
 // =====================================================================
-class ImixGenerator {
- private:
-  static constexpr uint16_t kPattern[12] = {
-      64, 64, 64, 64, 64, 64, 64,   // 7x64
-      594, 594, 594, 594,           // 4x594
-      1518                            // 1x1518
-  };
-  uint32_t idx_ = 0;
 
- public:
-  uint16_t next() {
-    uint16_t sz = kPattern[idx_];
-    idx_ = (idx_ + 1) % 12;
-    return sz;
-  }
-
-  void reset() { idx_ = 0; }
+// Таблица из 12 записей (7+4+1)
+static constexpr std::array<uint16_t, 12> kImixTable = {
+     64,  64,  64,  64,  64,  64,  64,   // 7 × 64
+    512, 512, 512, 512,                   // 4 × 512
+   1518                                   // 1 × 1518
 };
 
-// =====================================================================
-// next_frame_size - выбирает размер фрейма для следующего сегмента
-// согласно FrameMode stream-а.
-//
-// imix_state - per-stream состояние генератора IMIX (хранится в
-// StreamRuntimeState, см. test_instance.hpp).
-// =====================================================================
-inline uint16_t next_frame_size(const StreamConfig& cfg,
-                                 ImixGenerator& imix_state) {
-  if (cfg.frame_mode == 1 /* IMIX */)
-    return imix_state.next();
-  return cfg.frame_size;  // FIX
+// Размер IP-payload = frame_size - 14 (ETH) - 4 (FCS, если считать)
+// Здесь возвращаем полный размер фрейма, вычитание делает caller.
+inline uint16_t imix_frame_size(uint8_t& idx) {
+    uint16_t sz = kImixTable[idx % 12];
+    idx = static_cast<uint8_t>((idx + 1) % 12);
+    return sz;
+}
+
+// Минимальный/максимальный размер для ограничения frame_size
+static constexpr uint16_t kMinFrameSize = 64;
+static constexpr uint16_t kMaxFrameSize = 9000; // jumbo frames
+
+// Размер полезной нагрузки UDP/TCP с учётом заголовков
+// frame_size = 14 (ETH) + [4 VLAN] + 20 (IP) + 20 (TCP) или 8 (UDP) + payload
+inline uint16_t tcp_payload_from_frame(uint16_t frame_size, bool has_vlan) {
+    uint16_t hdr = 14 + (has_vlan ? 4 : 0) + 20 + 20;
+    return (frame_size > hdr) ? (frame_size - hdr) : 0;
+}
+
+inline uint16_t udp_payload_from_frame(uint16_t frame_size, bool has_vlan) {
+    uint16_t hdr = 14 + (has_vlan ? 4 : 0) + 20 + 8;
+    return (frame_size > hdr) ? (frame_size - hdr) : 0;
 }

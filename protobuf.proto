@@ -1,0 +1,124 @@
+syntax = "proto3";
+
+package tester_proto;
+
+// Типы команд
+enum CommandType {
+  CMD_START_TEST = 0;
+  CMD_STOP_TEST = 1;
+  CMD_PAUSE_TEST = 2;
+  CMD_RESUME_TEST = 3;
+  CMD_GET_STATS = 4;
+  CMD_LIST_TESTS = 5;
+  CMD_SET_RATE = 6;
+}
+
+// Состояния теста
+enum TestState {
+  STOPPED = 0;
+  RUNNING = 1;
+  PAUSED = 2;
+}
+
+// IP-адрес (4 октета)
+message IPAddress {
+  uint32 octet1 = 1;
+  uint32 octet2 = 2;
+  uint32 octet3 = 3;
+  uint32 octet4 = 4;
+}
+
+// Диапазон портов
+message PortRange {
+  uint32 start = 1;
+  uint32 end = 2;
+}
+
+// Описание отдельного потока
+message Stream {
+  uint32 port_id = 1;                    // ID порта
+  uint32 port_mode = 2;               // Режим порта
+  uint32 vlan = 3;                   // VLAN ID
+  uint32 frame_size = 4;             // Размер кадра
+  uint32 frame_mode = 5;           // Режим кадра
+  IPAddress source_ip_start = 6;    // Начало диапазона исходных IP
+  IPAddress source_ip_end = 7;     // Конец диапазона исходных IP
+  IPAddress network_mask = 8;      // Маска сети
+  IPAddress default_gateway = 9;    // Шлюз по умолчанию
+  IPAddress destination_ip_start = 10; // Начало диапазона целевых IP
+  IPAddress destination_ip_end = 11;  // Конец диапазона целевых IP
+  uint32 dscp = 12;               // DSCP
+  uint32 protocol = 13;             // Протокол
+  PortRange source_port = 14;     // Диапазон исходных портов
+  PortRange destination_port = 15; // Диапазон целевых портов
+  uint32 tcp_initial_window_size = 16; // Размер окна TCP
+}
+
+// Основной запрос — команда
+message Command {
+  CommandType type = 1;           // Тип команды
+  Test test = 2;                  // Данные теста (для CMD_START_TEST)
+  uint32 test_id = 3;            // ID теста (для остальных команд)
+  SetRateRequest set_rate = 4;   // Запрос на установку скорости
+}
+
+// Запрос на изменение скорости
+message SetRateRequest {
+  uint32 test_id = 1;            // ID теста
+  int32 rate = 2;               // Скорость в процентах (1–100)
+}
+
+// Ответ на команду
+message CommandResponse {
+  bool ok = 1;                   // Успех операции
+  string error = 2;             // Текст ошибки (если ok=false)
+  uint32 test_id = 3;           // ID теста (при старте)
+}
+
+// Метрики отдельного потока
+message StreamMetricsSnapshot {
+  uint32 stream_index = 1;       // Индекс потока
+  uint64 tx_packets = 2;       // Переданные пакеты
+  uint64 tx_bytes = 3;         // Переданные байты
+  uint64 rx_packets = 4;       // Полученные пакеты
+  uint64 rx_bytes = 5;         // Полученные байты
+  uint64 tcp_connections_opened = 6;        // Открытые TCP-соединения
+  uint64 tcp_connections_established = 7;  // Установленные TCP-соединения
+  uint64 tcp_connections_closed = 8;       // Закрытые TCP-соединения
+  uint64 tcp_connections_reset = 9;       // Сброс TCP-соединений
+  uint64 tcp_retransmits = 10;            // Повторные передачи TCP
+  uint64 tcb_alloc_failed = 11;        // Ошибки выделения TCB
+  uint64 rx_dropped = 12;              // Потерянные пакеты
+  uint64 last_rtt_ns = 13;             // Последний RTT в наносекундах
+  double tx_pps = 14;                 // PPS исходящих пакетов
+  double rx_pps = 15;                // PPS входящих пакетов
+  double tx_bps = 16;                // BPS исходящих данных (бит/с)
+  double rx_bps = 17;                // BPS входящих данных (бит/с)
+}
+
+// Ответ со статистикой по тесту
+message StatsResponse {
+  uint32 test_id = 1;           // ID теста
+  TestState state = 2;           // Состояние теста
+  repeated StreamMetricsSnapshot streams = 3; // Метрики по потокам
+}
+
+// Описание теста (для запуска)
+message Test {
+  int32 rate = 1;               // Скорость в процентах (1–100)
+  TestState state = 2;           // Начальное состояние
+  repeated Stream stream = 3;   // Список потоков
+}
+
+// Информация об активном тесте
+message TestInfo {
+  uint32 test_id = 1;          // ID теста
+  TestState state = 2;          // Состояние
+  int32 rate = 3;             // Скорость в процентах
+  int32 num_streams = 4;      // Количество потоков
+}
+
+// Ответ со списком активных тестов
+message TestListResponse {
+  repeated TestInfo tests = 1; // Список тестов
+}
