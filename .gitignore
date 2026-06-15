@@ -1,0 +1,19 @@
+# Build
+build/
+bin/
+*.o
+*.a
+*.so
+
+# Generated
+protobuf.pb.cc
+protobuf.pb.h
+
+# IDE
+.vscode/
+.clangd/
+.cache/
+compile_commands.json
+
+# OS
+.DS_Store

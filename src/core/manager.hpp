@@ -18,7 +18,7 @@
 
 #include "lcore_worker.hpp"
 #include "metrics.hpp"
-#include "protobuf.pb.h"
+#include "proto/protobuf.pb.h"
 #include "test_instance.hpp"
 
 // =====================================================================

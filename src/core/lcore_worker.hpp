@@ -8,13 +8,14 @@
 #include <rte_mbuf.h>
 #include <rte_mempool.h>
 
-#include "arp.hpp"
-#include "frame_parser.hpp"
-#include "imix.hpp"
+#include "network/arp.hpp"
+#include "network/frame_parser.hpp"
+#include "network/imix.hpp"
+#include "network/tcp_stack.hpp"
+#include "network/udp_stack.hpp"
+
 #include "metrics.hpp"
-#include "tcp_stack.hpp"
 #include "test_instance.hpp"
-#include "udp_stack.hpp"
 
 // =====================================================================
 // Константы datapath
