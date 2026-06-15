@@ -5,9 +5,9 @@ bin/
 *.a
 *.so
 
-# Generated
-protobuf.pb.cc
-protobuf.pb.h
+# # Generated
+# protobuf.pb.cc
+# protobuf.pb.h
 
 # IDE
 .vscode/
