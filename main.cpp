@@ -6,6 +6,9 @@
 #include <rte_debug.h>
 #include <rte_eal.h>
 
+#include <string>
+using namespace std;
+
 #include "src/core/manager.hpp"
 
 static void print_usage(const char* progname) {
@@ -17,31 +20,36 @@ static void print_usage(const char* progname) {
             << std::endl;
 }
 
-int main(int argc, char** argv) {
+int main() {
   std::string sock_path = "/tmp/traffic_gen.sock";
+  string core_mask = "0-" + to_string(sysconf(_SC_NPROCESSORS_CONF) - 1);
+
+  vector<const char*> eal_config = {"main", "-l", core_mask.c_str(),
+                                    "--vdev=net_tap1,iface=dpdk-1"};
 
   // ====================== Парсинг APP аргументов ======================
-  int opt;
-  while ((opt = getopt(argc, argv, "h")) != -1) {
-    switch (opt) {
-      case 'h':
-        print_usage(argv[0]);
-        return 0;
-      default:
-        print_usage(argv[0]);
-        return 1;
-    }
-  }
+  // int opt;
+  // while ((opt = getopt(argc, argv, "h")) != -1) {
+  //   switch (opt) {
+  //     case 'h':
+  //       print_usage(argv[0]);
+  //       return 0;
+  //     default:
+  //       print_usage(argv[0]);
+  //       return 1;
+  //   }
+  // }
 
-  // Если после -- остались аргументы — можно их обработать позже
-  if (optind < argc) {
-    if (std::string(argv[optind]) == "--socket-path" && optind + 1 < argc) {
-      sock_path = argv[optind + 1];
-    }
-  }
+  // // Если после -- остались аргументы — можно их обработать позже
+  // if (optind < argc) {
+  //   if (std::string(argv[optind]) == "--socket-path" && optind + 1 < argc) {
+  //     sock_path = argv[optind + 1];
+  //   }
+  // }
 
   // ====================== Инициализация DPDK ======================
-  int ret = rte_eal_init(argc, argv);
+  int ret =
+      rte_eal_init(eal_config.size(), const_cast<char**>(eal_config.data()));
   if (ret < 0) {
     RTE_LOG(ERR, USER1, "EAL initialization failed\n");
     return 1;
