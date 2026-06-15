@@ -16,9 +16,9 @@
 #include <rte_lcore.h>
 #include <rte_malloc.h>
 
+#include "../proto/protobuf.pb.h"
 #include "lcore_worker.hpp"
 #include "metrics.hpp"
-#include "proto/protobuf.pb.h"
 #include "test_instance.hpp"
 
 // =====================================================================
