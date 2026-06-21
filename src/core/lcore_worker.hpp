@@ -158,7 +158,8 @@ static int lcore_main(void* arg) {
            !ctx->shutdown_requested.load(std::memory_order_relaxed)) {
       // RX: обрабатываем ARP-ответы
       rte_mbuf* rx_burst_arr[RX_BURST];
-      uint16_t nb_rx = rte_eth_rx_burst(port_id, 0, rx_burst_arr, RX_BURST);
+      uint16_t nb_rx =
+          rte_eth_rx_burst(ctx->port_id, ctx->queue_id, rx_burst_arr, RX_BURST);
 
       rte_mbuf* tx_burst_arr[TX_BURST];
       uint16_t nb_tx = 0;
@@ -267,7 +268,8 @@ static int lcore_main(void* arg) {
     // ================================================================
     // RX path
     // ================================================================
-    uint16_t nb_rx = rte_eth_rx_burst(port_id, 0, rx_arr, RX_BURST);
+    uint16_t nb_rx =
+        rte_eth_rx_burst(ctx->port_id, ctx->queue_id, rx_arr, RX_BURST);
 
     for (uint16_t i = 0; i < nb_rx; ++i) {
       rte_mbuf* m = rx_arr[i];

@@ -8,13 +8,16 @@
 #include <chrono>
 #include <cstring>
 #include <mutex>
+#include <set>
 #include <thread>
 #include <unordered_map>
 #include <vector>
 
 #include <rte_eal.h>
+#include <rte_ethdev.h>
 #include <rte_lcore.h>
 #include <rte_malloc.h>
+#include <rte_mempool.h>
 
 #include "../proto/protobuf.pb.h"
 #include "lcore_worker.hpp"
@@ -56,6 +59,20 @@ class Manager {
     std::chrono::steady_clock::time_point ts;
   };
   std::unordered_map<uint64_t, PrevCounters> prev_counters_;
+
+  // ---- Состояние Ethernet-портов (интерфейсов DPDK) ----
+  std::unordered_map<uint16_t, struct rte_mempool*>
+      port_mempools_;  // port_id -> mempool (по socket первого использования)
+  std::unordered_map<uint16_t, uint16_t>
+      port_queue_count_;  // port_id -> сколько очередей сконфигурировано
+  std::unordered_map<uint16_t, int>
+      port_refcount_;  // port_id -> активные тесты
+  std::mutex ports_mutex_;
+
+  static constexpr uint16_t RX_RING_SIZE = 1024;
+  static constexpr uint16_t TX_RING_SIZE = 1024;
+  static constexpr uint32_t MBUF_POOL_SIZE = 8192 - 1;
+  static constexpr uint16_t MBUF_CACHE_SIZE = 256;
 
  public:
   explicit Manager(std::string sock_path) : sock_path_(std::move(sock_path)) {
@@ -113,6 +130,185 @@ class Manager {
   }
 
  private:
+  // -------------------------------------------------------------
+  // Инициализация физических портов (Ethernet-интерфейсов DPDK).
+  // Вызывается ПОСЛЕ шардирования streams по lcore, ДО запуска
+  // rte_eal_remote_launch. Идемпотентна: если порт уже сконфигурирован
+  // и запущен предыдущим тестом, повторно не трогается (refcount++).
+  // -------------------------------------------------------------
+  bool init_ports(
+      const std::vector<std::vector<StreamConfig>>& per_lcore_streams,
+      size_t n_lcores,
+      std::vector<uint16_t>& out_queue_id /* размер n_lcores */) {
+    std::lock_guard<std::mutex> lock(ports_mutex_);
+
+    out_queue_id.assign(n_lcores, 0);
+
+    // 1. Сгруппировать lcore-индексы по port_id (берём port_id первого
+    //    stream в группе - так же, как делает handle_start_test).
+    std::unordered_map<uint16_t, std::vector<size_t>> port_to_lcores;
+    for (size_t li = 0; li < n_lcores; ++li) {
+      if (per_lcore_streams[li].empty())
+        continue;
+      uint16_t port_id =
+          static_cast<uint16_t>(per_lcore_streams[li][0].port_id);
+      port_to_lcores[port_id].push_back(li);
+    }
+
+    for (auto& [port_id, lcore_idxs] : port_to_lcores) {
+      if (!rte_eth_dev_is_valid_port(port_id)) {
+        RTE_LOG(ERR, USER1, "init_ports: port %u is not valid\n", port_id);
+        return false;
+      }
+
+      uint16_t needed_queues = static_cast<uint16_t>(lcore_idxs.size());
+
+      // Назначаем queue_id каждому lcore в пределах этого порта,
+      // начиная с того, что уже занято предыдущими тестами.
+      uint16_t base_queue =
+          port_queue_count_.count(port_id) ? port_queue_count_[port_id] : 0;
+      uint16_t total_queues_after = base_queue + needed_queues;
+
+      for (size_t k = 0; k < lcore_idxs.size(); ++k) {
+        out_queue_id[lcore_idxs[k]] = static_cast<uint16_t>(base_queue + k);
+      }
+
+      if (port_refcount_[port_id] > 0) {
+        // Порт уже запущен. DPDK не позволяет добавлять очереди
+        // "на ходу" без полной переконфигурации (dev_stop + configure
+        // + dev_start). Поэтому если новый тест требует больше очередей,
+        // чем выделено ранее - останавливаем порт и переконфигурируем
+        // под суммарное число очередей.
+        if (total_queues_after <= port_queue_count_[port_id]) {
+          port_refcount_[port_id]++;
+          port_queue_count_[port_id] =
+              std::max(port_queue_count_[port_id], total_queues_after);
+          continue;
+        }
+        rte_eth_dev_stop(port_id);
+      }
+
+      // Mempool: один на порт, размер берём с запасом под все очереди.
+      struct rte_mempool* pool =
+          port_mempools_.count(port_id) ? port_mempools_[port_id] : nullptr;
+      if (pool == nullptr) {
+        int socket_id = rte_eth_dev_socket_id(port_id);
+        if (socket_id < 0)
+          socket_id = SOCKET_ID_ANY;
+
+        char pool_name[32];
+        snprintf(pool_name, sizeof(pool_name), "mbuf_pool_%u", port_id);
+
+        pool = rte_pktmbuf_pool_create(
+            pool_name,
+            MBUF_POOL_SIZE * std::max<uint16_t>(total_queues_after, 1),
+            MBUF_CACHE_SIZE, 0, RTE_MBUF_DEFAULT_BUF_SIZE, socket_id);
+
+        if (pool == nullptr) {
+          RTE_LOG(ERR, USER1,
+                  "init_ports: failed to create mbuf pool for port %u: %s\n",
+                  port_id, rte_strerror(rte_errno));
+          return false;
+        }
+        port_mempools_[port_id] = pool;
+      }
+
+      struct rte_eth_conf port_conf{};
+      port_conf.rxmode.mq_mode = RTE_ETH_MQ_RX_RSS;
+      port_conf.rx_adv_conf.rss_conf.rss_hf =
+          RTE_ETH_RSS_IP | RTE_ETH_RSS_TCP | RTE_ETH_RSS_UDP;
+
+      struct rte_eth_dev_info dev_info{};
+      rte_eth_dev_info_get(port_id, &dev_info);
+      port_conf.rx_adv_conf.rss_conf.rss_hf &= dev_info.flow_type_rss_offloads;
+
+      if (rte_eth_dev_configure(port_id, total_queues_after, total_queues_after,
+                                &port_conf) != 0) {
+        RTE_LOG(ERR, USER1,
+                "init_ports: rte_eth_dev_configure failed for port %u\n",
+                port_id);
+        return false;
+      }
+
+      uint16_t rx_desc = RX_RING_SIZE, tx_desc = TX_RING_SIZE;
+      if (rte_eth_dev_adjust_nb_rx_tx_desc(port_id, &rx_desc, &tx_desc) != 0) {
+        RTE_LOG(ERR, USER1, "init_ports: adjust nb desc failed for port %u\n",
+                port_id);
+        return false;
+      }
+
+      for (uint16_t q = 0; q < total_queues_after; ++q) {
+        int socket_id = rte_eth_dev_socket_id(port_id);
+        if (socket_id < 0)
+          socket_id = SOCKET_ID_ANY;
+
+        if (rte_eth_rx_queue_setup(port_id, q, rx_desc, socket_id,
+                                   &dev_info.default_rxconf, pool) != 0) {
+          RTE_LOG(ERR, USER1,
+                  "init_ports: rx_queue_setup failed port=%u queue=%u\n",
+                  port_id, q);
+          return false;
+        }
+        if (rte_eth_tx_queue_setup(port_id, q, tx_desc, socket_id,
+                                   &dev_info.default_txconf) != 0) {
+          RTE_LOG(ERR, USER1,
+                  "init_ports: tx_queue_setup failed port=%u queue=%u\n",
+                  port_id, q);
+          return false;
+        }
+      }
+
+      if (rte_eth_dev_start(port_id) != 0) {
+        RTE_LOG(ERR, USER1,
+                "init_ports: rte_eth_dev_start failed for port %u\n", port_id);
+        return false;
+      }
+
+      rte_eth_promiscuous_enable(port_id);
+
+      port_queue_count_[port_id] = total_queues_after;
+      port_refcount_[port_id] =
+          port_refcount_.count(port_id) ? port_refcount_[port_id] + 1 : 1;
+
+      RTE_LOG(INFO, USER1, "port %u configured: %u rx/tx queues started\n",
+              port_id, total_queues_after);
+    }
+
+    return true;
+  }
+
+  // -------------------------------------------------------------
+  // Освобождение портов при остановке теста: decrement refcount,
+  // при 0 - dev_stop + dev_close + free mempool.
+  // -------------------------------------------------------------
+  void release_ports(const std::vector<LcoreContext*>& contexts) {
+    std::lock_guard<std::mutex> lock(ports_mutex_);
+    std::set<uint16_t> ports;
+    for (auto* ctx : contexts)
+      ports.insert(ctx->port_id);
+
+    for (uint16_t port_id : ports) {
+      auto it = port_refcount_.find(port_id);
+      if (it == port_refcount_.end())
+        continue;
+      if (--it->second > 0)
+        continue;
+
+      rte_eth_dev_stop(port_id);
+      rte_eth_dev_close(port_id);
+
+      auto pit = port_mempools_.find(port_id);
+      if (pit != port_mempools_.end()) {
+        rte_mempool_free(pit->second);
+        port_mempools_.erase(pit);
+      }
+      port_queue_count_.erase(port_id);
+      port_refcount_.erase(it);
+
+      RTE_LOG(INFO, USER1, "port %u stopped and closed\n", port_id);
+    }
+  }
+
   // ------------------------------------------------------------------
   // Чтение/запись length-prefixed сообщений
   // ------------------------------------------------------------------
@@ -219,6 +415,13 @@ class Manager {
       per_lcore[i % n_lc].push_back(cfg);
     }
 
+    // ---- Инициализация Ethernet-портов (интерфейсов) под этот тест ----
+    std::vector<uint16_t> queue_ids;
+    if (!init_ports(per_lcore, n_lc, queue_ids)) {
+      send_error(fd, "failed to initialize ports for test");
+      return;
+    }
+
     // ---- Запускаем каждый lcore ----
     for (size_t li = 0; li < n_lc; ++li) {
       if (per_lcore[li].empty())
@@ -236,6 +439,7 @@ class Manager {
       new (ctx) LcoreContext();
 
       ctx->lcore_id = static_cast<uint16_t>(lc_id);
+      ctx->queue_id = queue_ids[li];
       ctx->port_id = static_cast<uint16_t>(per_lcore[li][0].port_id);
       ctx->streams = std::move(per_lcore[li]);
       ctx->metrics = nullptr;
@@ -291,8 +495,14 @@ class Manager {
       ctx->running.store(false, std::memory_order_relaxed);
       ctx->shutdown_requested.store(true, std::memory_order_relaxed);
     }
+
     for (auto* ctx : it->second.lcore_contexts) {
       rte_eal_wait_lcore(ctx->lcore_id);
+    }
+
+    release_ports(it->second.lcore_contexts);
+
+    for (auto* ctx : it->second.lcore_contexts) {
       if (ctx->metrics)
         rte_free(ctx->metrics);
       ctx->~LcoreContext();

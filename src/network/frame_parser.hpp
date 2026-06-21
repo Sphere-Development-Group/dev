@@ -10,7 +10,7 @@
 #include <rte_udp.h>
 
 #include "tcp_stack.hpp"
-#include "test_instance.hpp"
+#include "../core/test_instance.hpp"
 
 // =====================================================================
 // ParsedFrame — результат разбора входящего mbuf.
