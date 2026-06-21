@@ -1,0 +1,82 @@
+# ============================================================================
+# Примеры конфигураций
+# ============================================================================
+
+# --- config-basic.yaml ---
+# Минимальная конфигурация для двух портов
+socket_path: /tmp/traffic_gen.sock
+pci_devices:
+  - "0000:01:00.0"
+  - "0000:01:00.1"
+
+socket_path: /tmp/traffic_gen.sock
+pci_devices:
+- "--vdev=net_tap1,iface=dpdk-1"
+- "--vdev=net_tap2,iface=dpdk-2"
+
+# # --- config-4ports.yaml ---
+# # Конфигурация с 4 портами
+# socket_path: /tmp/traffic_gen.sock
+# core_mask: "0-7"
+# pci_devices:
+#   - "0000:01:00.0"
+#   - "0000:01:00.1"
+#   - "0000:02:00.0"
+#   - "0000:02:00.1"
+
+
+# # --- config-production.yaml ---
+# # Production конфигурация с выделенными ядрами и большим количеством портов
+# socket_path: /var/run/traffic_gen.sock
+# core_mask: "0-15"
+# pci_devices:
+#   - "0000:01:00.0"
+#   - "0000:01:00.1"
+#   - "0000:02:00.0"
+#   - "0000:02:00.1"
+#   - "0000:03:00.0"
+#   - "0000:03:00.1"
+
+
+# # --- config-numa.yaml ---
+# # Конфигурация для NUMA систем (каждое ядро на своем NUMA узле)
+# socket_path: /tmp/traffic_gen.sock
+# core_mask: "0,2,4,6"  # Ядра с разных узлов
+# pci_devices:
+#   - "0000:01:00.0"
+#   - "0000:01:00.1"
+
+
+# ============================================================================
+# КАК ИСПОЛЬЗОВАТЬ:
+# ============================================================================
+#
+# 1. Скопировать нужный конфиг:
+#    sudo cp config-basic.yaml /etc/traffic_gen/config.yaml
+#
+# 2. Запустить с конфигом:
+#    sudo traffic_gen --config /etc/traffic_gen/config.yaml
+#
+# 3. Запустить с переопределением сокета:
+#    sudo traffic_gen --config /etc/traffic_gen/config.yaml --socket /var/run/tgen.sock
+#
+# ============================================================================
+# КАК НАЙТИ PCI АДРЕСА УСТРОЙСТВ:
+# ============================================================================
+#
+# 1. Использовать dpdk-devbind.py:
+#    python3 $RTE_SDK/usertools/dpdk-devbind.py --status
+#
+# 2. Или lspci:
+#    lspci | grep -i ethernet
+#
+# 3. Или ethtool:
+#    ethtool -i eth0  (смотрим bus-info)
+#
+# Пример вывода:
+#    01:00.0 Ethernet controller: Intel Corporation 82599ES 10-Gigabit SFI/SFP+
+#    01:00.1 Ethernet controller: Intel Corporation 82599ES 10-Gigabit SFI/SFP+
+#
+# Адреса: 0000:01:00.0 и 0000:01:00.1
+#
+# ============================================================================

@@ -7,7 +7,7 @@
 #include <rte_ether.h>
 
 #include "metrics.hpp"
-#include "tcp_stack.hpp"
+#include "../network/tcp_stack.hpp"
 
 // =====================================================================
 // StreamConfig — runtime-конфигурация одного Stream (без protobuf).
@@ -97,10 +97,15 @@ struct LcoreContext {
 // TestInstance — сущность теста на стороне Manager.
 // =====================================================================
 struct TestInstance {
-  uint32_t test_id{0};
+  uint32_t test_id{0};  // ИСПРАВЛЕНО: инициализация значением по умолчанию
   int32_t rate{100};
   int32_t state{0};
   size_t total_streams{0};
 
   std::vector<LcoreContext*> lcore_contexts;
+
+  // Конструктор для явной инициализации
+  TestInstance() = default;
+
+  explicit TestInstance(uint32_t id) : test_id(id) {}
 };

@@ -7,7 +7,7 @@
 #include <rte_mbuf.h>
 #include <rte_udp.h>
 
-#include "metrics.hpp"
+#include "../core/metrics.hpp"
 #include "tcp_stack.hpp"  // for SessionKey
 
 // =====================================================================

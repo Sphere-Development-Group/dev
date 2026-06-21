@@ -33,7 +33,7 @@ INCLUDES := -I. -I$(SRC_DIR) -I$(SRC_DIR)/core -I$(SRC_DIR)/network -I$(SRC_DIR)
 
 # Финальные флаги
 ALL_CFLAGS := $(CXXFLAGS) $(INCLUDES) $(DPDK_CFLAGS)
-ALL_LIBS   := $(DPDK_LIBS) -lpthread -ldl -lnuma -lprotobuf
+ALL_LIBS   := $(DPDK_LIBS) -lpthread -ldl -lnuma -lprotobuf -lyaml-cpp
 
 # Цвета для вывода
 GREEN := \033[0;32m
